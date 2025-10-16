@@ -34,9 +34,9 @@ namespace BDS
                 MessageBox.Show(ex.ToString());
             }
 
-            Scan.InitializeDatabase();
+            DBM.InitializeDatabase();
 
-            string list = Scan.GetPhoneNumbersCreatedAfterOneWeek();
+            string list = DBM.GetPhoneNumbersCreatedAfterOneWeek();
             txtDsSDT.Text = list; // txtPhoneNumbers là TextBox multiline
         }
 
@@ -44,7 +44,7 @@ namespace BDS
         {
             try
             {
-                Scan.Init();
+                Scanner.Init();
             }
             catch (Exception ex)
             {
