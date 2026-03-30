@@ -60,7 +60,7 @@ namespace ScanPhoneNumber
             while (pageCurrent < maxPerPage)
             {
                 int pageStart = pageCurrent + 1;
-                int pageEnd = pageCurrent + 600;
+                int pageEnd = pageCurrent + 6000;
                 if (pageEnd > maxPerPage) pageEnd = maxPerPage;
 
                 Task.Run(() => RunJobAsync(baseUrl, pageStart, pageEnd));
@@ -85,7 +85,7 @@ namespace ScanPhoneNumber
                 }
 
                 Random random = new Random();
-                await Task.Delay(TimeSpan.FromSeconds(1)); // Chạy mỗi 5 giây
+                await Task.Delay(TimeSpan.FromSeconds(2)); // Chạy mỗi 5 giây
             }
         }
 
@@ -107,7 +107,7 @@ namespace ScanPhoneNumber
                     var phones = ScrapePhones_Proxy(url, out bool isOK);
                     if (!isOK)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(1));
+                        await Task.Delay(TimeSpan.FromSeconds(1000));
                         continue;
                     }
 
@@ -131,7 +131,7 @@ namespace ScanPhoneNumber
 
                     page++;
 
-                    await Task.Delay(TimeSpan.FromSeconds(1)); // Chạy mỗi 1 giây
+                    await Task.Delay(TimeSpan.FromSeconds(2)); // Chạy mỗi 1 giây
                 }
             }
             catch (Exception ex)
@@ -180,7 +180,10 @@ namespace ScanPhoneNumber
 
                 phoneNumber = DBM.GetPhoneNumberByProfileId(profileId);
                 if (!string.IsNullOrEmpty(phoneNumber))
+                {
+                    Log.Information($"Đã có số điện thoại: {phoneNumber}");
                     continue;
+                }
 
                 HTMLHelper.ChangeTorIP();
 

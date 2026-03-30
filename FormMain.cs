@@ -14,7 +14,7 @@ using System.Windows.Forms;
 
 namespace BDS
 {
-    public partial class FormMain: Form
+    public partial class FormMain : Form
     {
         public FormMain()
         {
@@ -49,7 +49,7 @@ namespace BDS
             catch (Exception ex)
             {
                 MessageBox.Show(ex.ToString());
-            }           
+            }
         }
 
         private void btnCopyAll_Click(object sender, EventArgs e)
@@ -57,6 +57,44 @@ namespace BDS
             var lines = listBoxLogs.Items.Cast<string>();
             Clipboard.SetText(string.Join(Environment.NewLine, lines));
         }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            RunJobAsync();
+        }
+        static async Task RunJobAsync()
+        {
+            // Cấu hình
+            int maxPage = 5;      // Số trang tối đa muốn lấy
+            int delayMs = 2000;   // Delay giữa các trang (ms)
+            bool headless = true;  // false = thấy Chrome chạy
+
+            var collector = new NhatotUrlCollector();
+            //await collector.InitAsync(headless);
+
+            var urls = await collector.GetAllUrlsAsync(maxPage, delayMs);
+
+            // In kết quả
+            Console.WriteLine($"\n{'─',50}");
+            Console.WriteLine($"TỔNG: {urls.Count} URL tin đăng");
+            Console.WriteLine(new string('─', 50));
+            foreach (var url in urls)
+                Console.WriteLine(url);
+
+            var scraper = new NhatotPlaywrightScraper();
+            await scraper.InitAsync(headless: true);
+            //var urls = new[]
+            //{
+            //    "https://www.nhatot.com/mua-ban-nha-dat-quan-binh-thanh-tp-ho-chi-minh/131258981.htm",
+            //    // Thêm URL khác...
+            //};
+            var results = await scraper.GetPhonesAsync(urls, delayMs: 2000);
+            //Console.WriteLine("\n" + new string('─', 50));
+            //foreach (var r in results)
+            //    Console.WriteLine($"  {r}");
+            //Console.WriteLine($"\nThành công: {results.Count(r => r.Success)} / {results.Count}");
+        }
+
     }
 
     public class ListBoxSink : ILogEventSink
