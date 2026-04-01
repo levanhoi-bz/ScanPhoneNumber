@@ -157,17 +157,22 @@ namespace BDS
                     return true;
                 }
                 else
-                {
-                    // đã có -> cập nhật
-                    var updateCmd = new SQLiteCommand($"UPDATE {TablePhoneNumber} SET Url = @Url, ProfileId = @ProfileId WHERE PhoneNumber = @PhoneNumber", conn);
-                    updateCmd.Parameters.AddWithValue("@PhoneNumber", phoneNumber);
-                    updateCmd.Parameters.AddWithValue("@Url", url);
-                    updateCmd.Parameters.AddWithValue("@ProfileId", ProfileId);
-                    updateCmd.ExecuteNonQuery();
-                    Log.Information($"Cap nhat ProfileId {ProfileId} cho so dien thoai {phoneNumber}");
-                    return false;
-                }
-
+                    if (ProfileId >0)
+                    {
+                        // đã có sđt -> cập nhật
+                        var updateCmd = new SQLiteCommand($"UPDATE {TablePhoneNumber} SET Url = @Url, ProfileId = @ProfileId WHERE PhoneNumber = @PhoneNumber", conn);
+                        updateCmd.Parameters.AddWithValue("@PhoneNumber", phoneNumber);
+                        updateCmd.Parameters.AddWithValue("@Url", url);
+                        updateCmd.Parameters.AddWithValue("@ProfileId", ProfileId);
+                        updateCmd.ExecuteNonQuery();
+                        Log.Information($"Cap nhat ProfileId {ProfileId} cho so dien thoai {phoneNumber}");
+                        return false;
+                    }
+                    else
+                    {
+                        Log.Information($"So dien thoai {phoneNumber} da ton tai, khong luu vao database.");
+                        return false;
+                    }
             }
         }
        public static void SaveToDatabaseTelegram(string phoneNumber, string url)

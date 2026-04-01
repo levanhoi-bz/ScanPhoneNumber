@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Playwright;
+using Serilog;
 
 /// <summary>
 /// Lấy số điện thoại từ nhatot.com dùng Playwright (headless Chrome).
@@ -56,18 +57,13 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
 
     public async Task<ScrapeResult> GetPhoneAsync(string listingUrl)
     {
-        Console.WriteLine($"[*] {listingUrl}");
-
+        //await InitAsync(headless: true);
         if (_context == null)
             throw new InvalidOperationException("Gọi InitAsync() trước.");
-
         var page = await _context.NewPageAsync();
-
         try
         {
-            // ── Bắt response của phone API (intercept network) ──────────────
             string capturedPhone = null;
-
             page.Response += async (_, response) =>
             {
                 if (response.Url.StartsWith(PhoneApiBase) && response.Status == 200)
@@ -77,44 +73,84 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
                         var body = await response.JsonAsync();
                         capturedPhone = body?.GetProperty("phone").GetString();
                     }
-                    catch { /* ignore parse errors */ }
+                    catch (Exception ex)
+                    {
+                        Log.Information($"{listingUrl}: Lỗi parse phone API: {ex.Message}");
+                    }
                 }
             };
 
-            // ── Mở trang listing ────────────────────────────────────────────
+            // ── 1. Chỉ dùng DOMContentLoaded, KHÔNG dùng NetworkIdle ────────
             await page.GotoAsync(listingUrl, new PageGotoOptions
             {
                 WaitUntil = WaitUntilState.DOMContentLoaded,
                 Timeout   = 30_000,
             });
 
-            // ── Chờ nút "Hiện số" xuất hiện rồi click ─────────────────────
-            // Selector có thể thay đổi theo version, thử lần lượt:
-            string[] buttonSelectors = new[]
+            // ── 2. Chờ React mount xong bằng cách đợi 1 element chắc chắn có
+            //       (ví dụ: tiêu đề bài đăng hoặc container chính) ───────────
+            try
             {
-                "button:has-text('Hiện số')",
-                "button:has-text('Xem số')",
-                "[class*='phone'] button",
-                "[data-testid*='phone']",
-                "button[class*='phone']",
-            };
+                await page.WaitForSelectorAsync(
+                    "h1, [class*='subject'], [class*='title'], main, #__next",
+                    new PageWaitForSelectorOptions
+                    {
+                        Timeout = 15_000,
+                        State   = WaitForSelectorState.Visible,
+                    });
+            }
+            catch (TimeoutException)
+            {
+                Log.Information($"{listingUrl}: Không load được nội dung trang.");
+                return ScrapeResult.Fail(listingUrl, "Trang không load được nội dung.");
+            }
+
+            // ── 3. Tìm nút phone, mỗi selector tự chờ tối đa 4s ─────────────
+            string[] buttonSelectors =
+            {
+            "button:has-text('Hiện số')",
+            //"button:has-text('Xem số')",
+            //"button:has-text('Hiện thị số')",
+            //"a:has-text('Hiện số')",
+            //"a:has-text('Xem số')",
+            //"[class*='showPhone']",
+            //"[class*='show-phone']",
+            //"[class*='phone'] button",
+            //"button[class*='phone']",
+            //"button[class*='Phone']",
+            //"[data-testid*='phone']",
+        };
 
             ILocator phoneButton = null;
             foreach (var sel in buttonSelectors)
             {
-                var loc = page.Locator(sel).First;
-                if (await loc.CountAsync() > 0)
+                try
                 {
-                    phoneButton = loc;
-                    Console.WriteLine($"    → Tìm thấy nút với selector: {sel}");
+                    await page.WaitForSelectorAsync(sel, new PageWaitForSelectorOptions
+                    {
+                        Timeout = 5_000,
+                        State   = WaitForSelectorState.Visible,
+                    });
+                    phoneButton = page.Locator(sel).First;
+                    Console.WriteLine($"    → Tìm thấy nút: {sel}");
                     break;
                 }
+                catch (TimeoutException) { /* thử selector tiếp */ }
             }
 
             if (phoneButton == null)
             {
-                // Fallback: thử lấy token từ __NEXT_DATA__ trực tiếp
-                Console.WriteLine("    → Không tìm thấy nút, thử lấy token từ __NEXT_DATA__...");
+            //    // Debug: dump class names chứa "phone" từ HTML
+            //    var phoneRelated = await page.EvaluateAsync<string[]>(@"
+            //    () => [...document.querySelectorAll('*')]
+            //        .filter(e => /phone|sdt|show/i.test(e.className + e.getAttribute('data-testid')))
+            //        .slice(0, 10)
+            //        .map(e => e.tagName + ' | class=' + e.className
+            //                   + ' | text=' + e.innerText?.slice(0,30))
+            //");
+            //    Log.Information($"{listingUrl}: Phone-related elements: {string.Join("\n", phoneRelated)}");
+
+                Console.WriteLine("    → Thử lấy token từ __NEXT_DATA__...");
                 var phone = await GetPhoneViaTokenAsync(page);
                 if (phone != null)
                 {
@@ -124,29 +160,41 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
                 return ScrapeResult.Fail(listingUrl, "Không tìm thấy nút 'Hiện số'");
             }
 
-            // Click nút và chờ network response
+            // ── 4. Intercept response trước khi click ─────────────────────────
+            var responseTask = page.WaitForResponseAsync(
+                r => r.Url.StartsWith(PhoneApiBase),
+                new PageWaitForResponseOptions { Timeout = 8_000 });
+
+            await phoneButton.ScrollIntoViewIfNeededAsync();
             await phoneButton.ClickAsync();
-            await page.WaitForTimeoutAsync(2000); // chờ API response
+
+            // ── 5. Chờ API response qua event hoặc WaitForResponse ───────────
+            try
+            {
+                var apiResponse = await responseTask;
+                if (capturedPhone == null && apiResponse.Status == 200)
+                {
+                    var body = await apiResponse.JsonAsync();
+                    capturedPhone = body?.GetProperty("phone").GetString();
+                }
+            }
+            catch (TimeoutException)
+            {
+                // API không trả về, thử đọc DOM
+            }
 
             if (capturedPhone != null)
-            {
-                Console.WriteLine($"    ✓ {capturedPhone}");
                 return ScrapeResult.Ok(listingUrl, capturedPhone);
-            }
 
-            // Fallback: đọc số từ DOM sau khi click
             var phoneText = await TryReadPhoneFromDomAsync(page);
             if (phoneText != null)
-            {
-                Console.WriteLine($"    ✓ {phoneText} (từ DOM)");
                 return ScrapeResult.Ok(listingUrl, phoneText);
-            }
 
             return ScrapeResult.Fail(listingUrl, "Click được nút nhưng không lấy được số");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"    [!] Lỗi: {ex.Message}");
+            Log.Information($"{listingUrl}: {ex.ToString()}");
             return ScrapeResult.Fail(listingUrl, ex.Message);
         }
         finally
@@ -158,8 +206,7 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
     // ─── Lấy SĐT từ nhiều URL ────────────────────────────────────────────────
 
     public async Task<List<ScrapeResult>> GetPhonesAsync(
-        IEnumerable<string> urls,
-        int delayMs = 2000)
+        IEnumerable<string> urls)
     {
         var results = new List<ScrapeResult>();
         var list    = urls.ToList();
@@ -168,10 +215,6 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
         {
             var r = await GetPhoneAsync(list[i]);
             results.Add(r);
-            Console.WriteLine($"    [{i + 1}/{list.Count}]");
-
-            if (i < list.Count - 1)
-                await Task.Delay(delayMs);
         }
 
         return results;

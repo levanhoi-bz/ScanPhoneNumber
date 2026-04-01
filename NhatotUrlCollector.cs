@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Playwright;
+using Serilog;
 
 /// <summary>
 /// Lấy danh sách URL tin đăng từ các trang tìm kiếm nhatot.com
@@ -19,7 +20,6 @@ public class NhatotUrlCollector : IAsyncDisposable
     private IBrowser        _browser;
     private IBrowserContext _context;
 
-    private const string BaseSearchUrl = "https://www.nhatot.com/mua-ban-bat-dong-san";
 
     // ─── Khởi tạo ────────────────────────────────────────────────────────────
 
@@ -49,12 +49,12 @@ public class NhatotUrlCollector : IAsyncDisposable
 
     // ─── Lấy URL từ 1 trang ──────────────────────────────────────────────────
 
-    public async Task<List<string>> GetUrlsFromPageAsync(int pageNumber)
+    public async Task<List<string>> GetUrlsFromPageAsync(string baseUrl, int pageNumber)
     {
         if (_context == null)
             throw new InvalidOperationException("Gọi InitAsync() trước.");
 
-        var searchUrl = $"{BaseSearchUrl}?page={pageNumber}";
+        var searchUrl = $"{baseUrl}?page={pageNumber}";
         Console.WriteLine($"[Page {pageNumber}] {searchUrl}");
 
         var page = await _context.NewPageAsync();
@@ -99,33 +99,25 @@ public class NhatotUrlCollector : IAsyncDisposable
     /// Tự dừng sớm nếu trang trả về rỗng (hết tin).
     /// </summary>
     public async Task<List<string>> GetAllUrlsAsync(
-        int maxPage,
-        int delayMs    = 1500,
+        string baseUrl,
+        int currentPage,
         bool stopEmpty = true)
     {
         var all = new List<string>();
 
-        for (int p = 1; p <= maxPage; p++)
+        await InitAsync(true);
+
+        var urls = await GetUrlsFromPageAsync(baseUrl,currentPage);
+
+        if (urls.Count == 0 && stopEmpty)
         {
-            await InitAsync(true);
-
-            var urls = await GetUrlsFromPageAsync(p);
-
-            if (urls.Count == 0 && stopEmpty)
-            {
-                Console.WriteLine($"  → Trang {p} rỗng, dừng lại.");
-                break;
-            }
-
-            // Loại bỏ trùng lặp
-            var newUrls = urls.Except(all).ToList();
-            all.AddRange(newUrls);
-
-            Console.WriteLine($"  → Tổng tích lũy: {all.Count} URL");
-
-            if (p < maxPage)
-                await Task.Delay(delayMs);
+            Log.Information($"  → Trang {currentPage} rỗng, dừng lại.");
+            return all;
         }
+
+        // Loại bỏ trùng lặp
+        var newUrls = urls.Except(all).ToList();
+        all.AddRange(newUrls);
 
         return all;
     }
@@ -155,7 +147,9 @@ public class NhatotUrlCollector : IAsyncDisposable
                 });
                 return; // tìm thấy rồi
             }
-            catch (TimeoutException) { }
+            catch (TimeoutException ex) {
+                Log.Information(ex.ToString());
+            }
         }
     }
 
