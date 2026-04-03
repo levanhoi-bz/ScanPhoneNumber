@@ -88,7 +88,7 @@ namespace ScanPhoneNumber
 
                 while (page < endPage)
                 {
-                    Log.Information($"Job chay trang: {page}");
+                    Log.Information($"Job chay trang: {baseUrl}?page={page}");
 
                     List<string> newPhones = new List<string>();
 
@@ -111,7 +111,10 @@ namespace ScanPhoneNumber
                         continue;
                     }
                     if (phones.Count(v=>!v.Success) > 0)
-                        Log.Information($"{baseUrl}: {string.Join("\n", phones.Where(v => !v.Success).Select(u => u.Error))}.");                    
+                        Log.Information($"{baseUrl}?page={page}: {string.Join("\n", phones.Where(v => !v.Success).Select(u => u.Error))}.");
+
+                    if (phones.Count(v => v.Success) > 0)
+                        Log.Information($"{baseUrl}?page={page}: {string.Join("\n", phones.Where(v => v.Success).Select(u => u.Phone))}.");
 
                     foreach (var item in phones)
                         if (item.Success)

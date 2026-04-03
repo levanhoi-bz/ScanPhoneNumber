@@ -47,6 +47,45 @@ public class NhatotUrlCollector : IAsyncDisposable
         );
     }
 
+    public async Task DestroyAsync()
+    {
+        try
+        {
+            if (_context != null)
+            {
+                await _context.CloseAsync();
+                _context = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"DestroyAsync: lỗi đóng context: {ex.Message}");
+        }
+
+        try
+        {
+            if (_browser != null)
+            {
+                await _browser.CloseAsync();
+                _browser = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"DestroyAsync: lỗi đóng browser: {ex.Message}");
+        }
+
+        try
+        {
+            _playwright?.Dispose();
+            _playwright = null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"DestroyAsync: lỗi dispose playwright: {ex.Message}");
+        }
+    }
+
     // ─── Lấy URL từ 1 trang ──────────────────────────────────────────────────
 
     public async Task<List<string>> GetUrlsFromPageAsync(string baseUrl, int pageNumber)
@@ -118,6 +157,8 @@ public class NhatotUrlCollector : IAsyncDisposable
         // Loại bỏ trùng lặp
         var newUrls = urls.Except(all).ToList();
         all.AddRange(newUrls);
+
+        await DestroyAsync();
 
         return all;
     }
