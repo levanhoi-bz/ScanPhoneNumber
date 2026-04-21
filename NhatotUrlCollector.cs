@@ -14,91 +14,118 @@ using Serilog;
 ///   dotnet build
 ///   pwsh bin/Debug/net8.0/playwright.ps1 install chromium
 /// </summary>
-public class NhatotUrlCollector : IAsyncDisposable
+public class NhatotUrlCollector
 {
-    private IPlaywright     _playwright;
-    private IBrowser        _browser;
-    private IBrowserContext _context;
+    //private IPlaywright     _playwright;
+    //private IBrowser        _browser;
+    //private IBrowserContext _context;
 
 
     // ─── Khởi tạo ────────────────────────────────────────────────────────────
 
-    public async Task InitAsync(bool headless = true)
-    {
-        _playwright = await Playwright.CreateAsync();
-        _browser    = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-        {
-            Headless = headless,
-            ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        });
+    //public async Task InitAsync(bool headless = true)
+    //{
+    //    _playwright = await Playwright.CreateAsync();
+    //    _browser    = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+    //    {
+    //        Headless = headless,
+    //        ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    //    });
 
-        _context = await _browser.NewContextAsync(new BrowserNewContextOptions
-        {
-            UserAgent  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                         "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                         "Chrome/122.0.0.0 Safari/537.36",
-            Locale     = "vi-VN",
-            TimezoneId = "Asia/Ho_Chi_Minh",
-            ViewportSize = new ViewportSize { Width = 1280, Height = 800 },
-        });
+    //    _context = await _browser.NewContextAsync(new BrowserNewContextOptions
+    //    {
+    //        UserAgent  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    //                     "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    //                     "Chrome/122.0.0.0 Safari/537.36",
+    //        Locale     = "vi-VN",
+    //        TimezoneId = "Asia/Ho_Chi_Minh",
+    //        ViewportSize = new ViewportSize { Width = 1280, Height = 800 },
+    //    });
 
-        await _context.AddInitScriptAsync(
-            "() => Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
-        );
-    }
+    //    await _context.AddInitScriptAsync(
+    //        "() => Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
+    //    );
+    //}
 
-    public async Task DestroyAsync()
-    {
-        try
-        {
-            if (_context != null)
-            {
-                await _context.CloseAsync();
-                _context = null;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning($"DestroyAsync: lỗi đóng context: {ex.Message}");
-        }
+    //public async Task DestroyAsync()
+    //{
+    //    try
+    //    {
+    //        if (_context != null)
+    //        {
+    //            await _context.CloseAsync();
+    //            _context = null;
+    //        }
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        Log.Warning($"DestroyAsync: lỗi đóng context: {ex.Message}");
+    //    }
 
-        try
-        {
-            if (_browser != null)
-            {
-                await _browser.CloseAsync();
-                _browser = null;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning($"DestroyAsync: lỗi đóng browser: {ex.Message}");
-        }
+    //    try
+    //    {
+    //        if (_browser != null)
+    //        {
+    //            await _browser.CloseAsync();
+    //            _browser = null;
+    //        }
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        Log.Warning($"DestroyAsync: lỗi đóng browser: {ex.Message}");
+    //    }
 
-        try
-        {
-            _playwright?.Dispose();
-            _playwright = null;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning($"DestroyAsync: lỗi dispose playwright: {ex.Message}");
-        }
-    }
+    //    try
+    //    {
+    //        _playwright?.Dispose();
+    //        _playwright = null;
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        Log.Warning($"DestroyAsync: lỗi dispose playwright: {ex.Message}");
+    //    }
+    //}
 
     // ─── Lấy URL từ 1 trang ──────────────────────────────────────────────────
 
     public async Task<List<string>> GetUrlsFromPageAsync(string baseUrl, int pageNumber)
     {
-        if (_context == null)
-            throw new InvalidOperationException("Gọi InitAsync() trước.");
+        IPlaywright playwright = null;
+        IBrowser browser = null;
+        IPage page = null;
+        IBrowserContext context = null;
 
-        var searchUrl = $"{baseUrl}?page={pageNumber}";
-        Console.WriteLine($"[Page {pageNumber}] {searchUrl}");
-
-        var page = await _context.NewPageAsync();
         try
         {
+            playwright = await Playwright.CreateAsync();
+            browser    = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = true,
+                ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                Args     = new[]
+                {
+                "--no-sandbox",
+                "--disable-dev-shm-usage",   // tránh /dev/shm OOM
+                "--disable-gpu",
+                "--disable-extensions",
+                "--bwsi",                    // no sign-in
+                "--disable-background-networking",
+            }
+            });
+
+            context = await browser.NewContextAsync(new BrowserNewContextOptions
+            {
+                UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                            "Chrome/124.0.0.0 Safari/537.36",
+            });
+
+
+            var searchUrl = $"{baseUrl}?page={pageNumber}";
+            Console.WriteLine($"[Page {pageNumber}] {searchUrl}");
+
+            page = await context.NewPageAsync();
+
             await page.GotoAsync(searchUrl, new PageGotoOptions
             {
                 WaitUntil = WaitUntilState.DOMContentLoaded,
@@ -127,7 +154,12 @@ public class NhatotUrlCollector : IAsyncDisposable
         }
         finally
         {
+            // ── Luôn cleanup dù exception ───────────────────────────────────
+
             await page.CloseAsync();
+            if (context != null) await context.DisposeAsync();
+            if (browser  != null) await browser.DisposeAsync();
+            playwright?.Dispose();
         }
     }
 
@@ -144,7 +176,7 @@ public class NhatotUrlCollector : IAsyncDisposable
     {
         var all = new List<string>();
 
-        await InitAsync(true);
+        //await InitAsync(true);
 
         var urls = await GetUrlsFromPageAsync(baseUrl,currentPage);
 
@@ -158,7 +190,7 @@ public class NhatotUrlCollector : IAsyncDisposable
         var newUrls = urls.Except(all).ToList();
         all.AddRange(newUrls);
 
-        await DestroyAsync();
+        //await DestroyAsync();
 
         return all;
     }
@@ -234,10 +266,10 @@ public class NhatotUrlCollector : IAsyncDisposable
         return $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}";
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_context != null) await _context.DisposeAsync();
-        if (_browser  != null) await _browser.DisposeAsync();
-        _playwright?.Dispose();
-    }
+    //public async ValueTask DisposeAsync()
+    //{
+    //    if (_context != null) await _context.DisposeAsync();
+    //    if (_browser  != null) await _browser.DisposeAsync();
+    //    _playwright?.Dispose();
+    //}
 }

@@ -23,13 +23,13 @@ namespace ScanPhoneNumber
 {
    public class ScannerNhatot
     {        
-        static bool IsSendTelegram = false;
+        static bool IsSendTelegram = true;
 
         const string baseUrl_HN = "https://www.nhatot.com/mua-ban-bat-dong-san-ha-noi";
-        const int Max_HN = 400;
+        const int Max_HN = 100;
 
         const string baseUrl_HCM = "https://www.nhatot.com/mua-ban-bat-dong-san-tp-ho-chi-minh";
-        const int Max_HCM = 1000;
+        const int Max_HCM = 100;
 
         public static async Task Init()
         {
@@ -102,7 +102,7 @@ namespace ScanPhoneNumber
                     }
 
                     var scraper = new NhatotPlaywrightScraper();
-                    await scraper.InitAsync(headless: true);
+                    //await scraper.InitAsync(headless: true);
 
                     var phones = await scraper.GetPhonesAsync(urls);
                     if(phones.Count == 0)

@@ -16,53 +16,80 @@ using Serilog;
 ///   dotnet build
 ///   pwsh bin/Debug/net8.0/playwright.ps1 install chromium
 /// </summary>
-public class NhatotPlaywrightScraper : IAsyncDisposable
+public class NhatotPlaywrightScraper
 {
-    private IPlaywright _playwright;
-    private IBrowser    _browser;
-    private IBrowserContext _context;
+    //private IPlaywright _playwright;
+    //private IBrowser    _browser;
+    //private IBrowserContext _context;
 
     private const string PhoneApiBase = "https://gateway.chotot.com/v1/public/ad-listing/phone";
 
     // ─── Khởi tạo ────────────────────────────────────────────────────────────
 
-    public async Task InitAsync(bool headless = true)
-    {
-        _playwright = await Playwright.CreateAsync();
-        _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-        {
-            Headless = headless,
-            // Bỏ comment nếu muốn dùng Chrome cài sẵn thay vì Chromium bundled:
-            ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        });
+    //public async Task InitAsync(bool headless = true)
+    //{
+    //    _playwright = await Playwright.CreateAsync();
+    //    _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+    //    {
+    //        Headless = headless,
+    //        // Bỏ comment nếu muốn dùng Chrome cài sẵn thay vì Chromium bundled:
+    //        ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    //    });
 
-        // Tạo context giống browser thật
-        _context = await _browser.NewContextAsync(new BrowserNewContextOptions
-        {
-            UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                        "Chrome/122.0.0.0 Safari/537.36",
-            Locale          = "vi-VN",
-            TimezoneId      = "Asia/Ho_Chi_Minh",
-            ViewportSize    = new ViewportSize { Width = 1280, Height = 800 },
-        });
+    //    // Tạo context giống browser thật
+    //    _context = await _browser.NewContextAsync(new BrowserNewContextOptions
+    //    {
+    //        UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+    //                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+    //                    "Chrome/122.0.0.0 Safari/537.36",
+    //        Locale          = "vi-VN",
+    //        TimezoneId      = "Asia/Ho_Chi_Minh",
+    //        ViewportSize    = new ViewportSize { Width = 1280, Height = 800 },
+    //    });
 
-        // Stealth: ẩn dấu hiệu automation
-        await _context.AddInitScriptAsync(@"
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        ");
-    }
+    //    // Stealth: ẩn dấu hiệu automation
+    //    await _context.AddInitScriptAsync(@"
+    //        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    //    ");
+    //}
 
     // ─── Lấy SĐT từ 1 URL ────────────────────────────────────────────────────
-
+    // KHÔNG dùng _context shared — mỗi lần scrape tạo + hủy browser độc lập
     public async Task<ScrapeResult> GetPhoneAsync(string listingUrl)
     {
-        //await InitAsync(headless: true);
-        if (_context == null)
-            throw new InvalidOperationException("Gọi InitAsync() trước.");
-        var page = await _context.NewPageAsync();
+        IPlaywright playwright = null;
+        IBrowser browser = null;
+        IPage page = null;
+        IBrowserContext context = null;
+
         try
         {
+            playwright = await Playwright.CreateAsync();
+            browser    = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = true,
+                ExecutablePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                Args     = new[]
+                {
+                "--no-sandbox",
+                "--disable-dev-shm-usage",   // tránh /dev/shm OOM
+                "--disable-gpu",
+                "--disable-extensions",
+                "--bwsi",                    // no sign-in
+                "--disable-background-networking",
+            }
+            });
+
+            context = await browser.NewContextAsync(new BrowserNewContextOptions
+            {
+                UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                            "Chrome/124.0.0.0 Safari/537.36",
+            });
+
+            page = await context.NewPageAsync();
+
+
             string capturedPhone = null;
             page.Response += async (_, response) =>
             {
@@ -108,18 +135,18 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
             // ── 3. Tìm nút phone, mỗi selector tự chờ tối đa 4s ─────────────
             string[] buttonSelectors =
             {
-            "button:has-text('Hiện số')",
-            //"button:has-text('Xem số')",
-            //"button:has-text('Hiện thị số')",
-            //"a:has-text('Hiện số')",
-            //"a:has-text('Xem số')",
-            //"[class*='showPhone']",
-            //"[class*='show-phone']",
-            //"[class*='phone'] button",
-            //"button[class*='phone']",
-            //"button[class*='Phone']",
-            //"[data-testid*='phone']",
-        };
+                    "button:has-text('Hiện số')",
+                    //"button:has-text('Xem số')",
+                    //"button:has-text('Hiện thị số')",
+                    //"a:has-text('Hiện số')",
+                    //"a:has-text('Xem số')",
+                    //"[class*='showPhone']",
+                    //"[class*='show-phone']",
+                    //"[class*='phone'] button",
+                    //"button[class*='phone']",
+                    //"button[class*='Phone']",
+                    //"[data-testid*='phone']",
+                };
 
             ILocator phoneButton = null;
             foreach (var sel in buttonSelectors)
@@ -140,15 +167,15 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
 
             if (phoneButton == null)
             {
-            //    // Debug: dump class names chứa "phone" từ HTML
-            //    var phoneRelated = await page.EvaluateAsync<string[]>(@"
-            //    () => [...document.querySelectorAll('*')]
-            //        .filter(e => /phone|sdt|show/i.test(e.className + e.getAttribute('data-testid')))
-            //        .slice(0, 10)
-            //        .map(e => e.tagName + ' | class=' + e.className
-            //                   + ' | text=' + e.innerText?.slice(0,30))
-            //");
-            //    Log.Information($"{listingUrl}: Phone-related elements: {string.Join("\n", phoneRelated)}");
+                //    // Debug: dump class names chứa "phone" từ HTML
+                //    var phoneRelated = await page.EvaluateAsync<string[]>(@"
+                //    () => [...document.querySelectorAll('*')]
+                //        .filter(e => /phone|sdt|show/i.test(e.className + e.getAttribute('data-testid')))
+                //        .slice(0, 10)
+                //        .map(e => e.tagName + ' | class=' + e.className
+                //                   + ' | text=' + e.innerText?.slice(0,30))
+                //");
+                //    Log.Information($"{listingUrl}: Phone-related elements: {string.Join("\n", phoneRelated)}");
 
                 Console.WriteLine("    → Thử lấy token từ __NEXT_DATA__...");
                 var phone = await GetPhoneViaTokenAsync(page);
@@ -194,14 +221,167 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Log.Information($"{listingUrl}: {ex.ToString()}");
+            Log.Error($"{listingUrl}: {ex}");
             return ScrapeResult.Fail(listingUrl, ex.Message);
         }
         finally
         {
+            // ── Luôn cleanup dù exception ───────────────────────────────────
+
             await page.CloseAsync();
+            if (context != null) await context.DisposeAsync();
+            if (browser  != null) await browser.DisposeAsync();
+            playwright?.Dispose();
         }
     }
+
+    //public async Task<ScrapeResult> GetPhoneAsync(string listingUrl)
+    //{
+    //    //await InitAsync(headless: true);
+    //    if (_context == null)
+    //        throw new InvalidOperationException("Gọi InitAsync() trước.");
+    //    var page = await _context.NewPageAsync();
+    //    try
+    //    {
+    //        string capturedPhone = null;
+    //        page.Response += async (_, response) =>
+    //        {
+    //            if (response.Url.StartsWith(PhoneApiBase) && response.Status == 200)
+    //            {
+    //                try
+    //                {
+    //                    var body = await response.JsonAsync();
+    //                    capturedPhone = body?.GetProperty("phone").GetString();
+    //                }
+    //                catch (Exception ex)
+    //                {
+    //                    Log.Information($"{listingUrl}: Lỗi parse phone API: {ex.Message}");
+    //                }
+    //            }
+    //        };
+
+    //        // ── 1. Chỉ dùng DOMContentLoaded, KHÔNG dùng NetworkIdle ────────
+    //        await page.GotoAsync(listingUrl, new PageGotoOptions
+    //        {
+    //            WaitUntil = WaitUntilState.DOMContentLoaded,
+    //            Timeout   = 30_000,
+    //        });
+
+    //        // ── 2. Chờ React mount xong bằng cách đợi 1 element chắc chắn có
+    //        //       (ví dụ: tiêu đề bài đăng hoặc container chính) ───────────
+    //        try
+    //        {
+    //            await page.WaitForSelectorAsync(
+    //                "h1, [class*='subject'], [class*='title'], main, #__next",
+    //                new PageWaitForSelectorOptions
+    //                {
+    //                    Timeout = 15_000,
+    //                    State   = WaitForSelectorState.Visible,
+    //                });
+    //        }
+    //        catch (TimeoutException)
+    //        {
+    //            Log.Information($"{listingUrl}: Không load được nội dung trang.");
+    //            return ScrapeResult.Fail(listingUrl, "Trang không load được nội dung.");
+    //        }
+
+    //        // ── 3. Tìm nút phone, mỗi selector tự chờ tối đa 4s ─────────────
+    //        string[] buttonSelectors =
+    //        {
+    //        "button:has-text('Hiện số')",
+    //        //"button:has-text('Xem số')",
+    //        //"button:has-text('Hiện thị số')",
+    //        //"a:has-text('Hiện số')",
+    //        //"a:has-text('Xem số')",
+    //        //"[class*='showPhone']",
+    //        //"[class*='show-phone']",
+    //        //"[class*='phone'] button",
+    //        //"button[class*='phone']",
+    //        //"button[class*='Phone']",
+    //        //"[data-testid*='phone']",
+    //    };
+
+    //        ILocator phoneButton = null;
+    //        foreach (var sel in buttonSelectors)
+    //        {
+    //            try
+    //            {
+    //                await page.WaitForSelectorAsync(sel, new PageWaitForSelectorOptions
+    //                {
+    //                    Timeout = 5_000,
+    //                    State   = WaitForSelectorState.Visible,
+    //                });
+    //                phoneButton = page.Locator(sel).First;
+    //                Console.WriteLine($"    → Tìm thấy nút: {sel}");
+    //                break;
+    //            }
+    //            catch (TimeoutException) { /* thử selector tiếp */ }
+    //        }
+
+    //        if (phoneButton == null)
+    //        {
+    //        //    // Debug: dump class names chứa "phone" từ HTML
+    //        //    var phoneRelated = await page.EvaluateAsync<string[]>(@"
+    //        //    () => [...document.querySelectorAll('*')]
+    //        //        .filter(e => /phone|sdt|show/i.test(e.className + e.getAttribute('data-testid')))
+    //        //        .slice(0, 10)
+    //        //        .map(e => e.tagName + ' | class=' + e.className
+    //        //                   + ' | text=' + e.innerText?.slice(0,30))
+    //        //");
+    //        //    Log.Information($"{listingUrl}: Phone-related elements: {string.Join("\n", phoneRelated)}");
+
+    //            Console.WriteLine("    → Thử lấy token từ __NEXT_DATA__...");
+    //            var phone = await GetPhoneViaTokenAsync(page);
+    //            if (phone != null)
+    //            {
+    //                Console.WriteLine($"    ✓ {phone}");
+    //                return ScrapeResult.Ok(listingUrl, phone);
+    //            }
+    //            return ScrapeResult.Fail(listingUrl, "Không tìm thấy nút 'Hiện số'");
+    //        }
+
+    //        // ── 4. Intercept response trước khi click ─────────────────────────
+    //        var responseTask = page.WaitForResponseAsync(
+    //            r => r.Url.StartsWith(PhoneApiBase),
+    //            new PageWaitForResponseOptions { Timeout = 8_000 });
+
+    //        await phoneButton.ScrollIntoViewIfNeededAsync();
+    //        await phoneButton.ClickAsync();
+
+    //        // ── 5. Chờ API response qua event hoặc WaitForResponse ───────────
+    //        try
+    //        {
+    //            var apiResponse = await responseTask;
+    //            if (capturedPhone == null && apiResponse.Status == 200)
+    //            {
+    //                var body = await apiResponse.JsonAsync();
+    //                capturedPhone = body?.GetProperty("phone").GetString();
+    //            }
+    //        }
+    //        catch (TimeoutException)
+    //        {
+    //            // API không trả về, thử đọc DOM
+    //        }
+
+    //        if (capturedPhone != null)
+    //            return ScrapeResult.Ok(listingUrl, capturedPhone);
+
+    //        var phoneText = await TryReadPhoneFromDomAsync(page);
+    //        if (phoneText != null)
+    //            return ScrapeResult.Ok(listingUrl, phoneText);
+
+    //        return ScrapeResult.Fail(listingUrl, "Click được nút nhưng không lấy được số");
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        Log.Information($"{listingUrl}: {ex.ToString()}");
+    //        return ScrapeResult.Fail(listingUrl, ex.Message);
+    //    }
+    //    finally
+    //    {
+    //        await page.CloseAsync();
+    //    }
+    //}
 
     // ─── Lấy SĐT từ nhiều URL ────────────────────────────────────────────────
 
@@ -291,14 +471,14 @@ public class NhatotPlaywrightScraper : IAsyncDisposable
         return null;
     }
 
-    // ─── Dispose ─────────────────────────────────────────────────────────────
+    //// ─── Dispose ─────────────────────────────────────────────────────────────
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_context != null) await _context.DisposeAsync();
-        if (_browser  != null) await _browser.DisposeAsync();
-        _playwright?.Dispose();
-    }
+    //public async ValueTask DisposeAsync()
+    //{
+    //    if (_context != null) await _context.DisposeAsync();
+    //    if (_browser  != null) await _browser.DisposeAsync();
+    //    _playwright?.Dispose();
+    //}
 }
 
 public class ScrapeResult
