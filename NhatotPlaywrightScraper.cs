@@ -55,7 +55,13 @@ public class NhatotPlaywrightScraper
 
     // ─── Lấy SĐT từ 1 URL ────────────────────────────────────────────────────
     // KHÔNG dùng _context shared — mỗi lần scrape tạo + hủy browser độc lập
-    public async Task<ScrapeResult> GetPhoneAsync(string listingUrl)
+    // Mọi request đi qua NhatotRateLimiter để giãn cách và tự nghỉ khi bị chặn IP
+    public Task<ScrapeResult> GetPhoneAsync(string listingUrl)
+    {
+        return NhatotRateLimiter.RunAsync(() => GetPhoneCoreAsync(listingUrl));
+    }
+
+    private async Task<ScrapeResult> GetPhoneCoreAsync(string listingUrl)
     {
         IPlaywright playwright = null;
         IBrowser browser = null;
@@ -108,11 +114,19 @@ public class NhatotPlaywrightScraper
             };
 
             // ── 1. Chỉ dùng DOMContentLoaded, KHÔNG dùng NetworkIdle ────────
-            await page.GotoAsync(listingUrl, new PageGotoOptions
+            var gotoResponse = await page.GotoAsync(listingUrl, new PageGotoOptions
             {
                 WaitUntil = WaitUntilState.DOMContentLoaded,
                 Timeout   = 30_000,
             });
+
+            // nhatot chặn IP → trả trang "Please try again later!" thay vì nội dung
+            if (await NhatotRateLimiter.IsBlockedAsync(page, gotoResponse))
+            {
+                NhatotRateLimiter.ReportBlocked(listingUrl);
+                return ScrapeResult.Blocked(listingUrl);
+            }
+            NhatotRateLimiter.ReportSuccess();
 
             // ── 2. Chờ React mount xong bằng cách đợi 1 element chắc chắn có
             //       (ví dụ: tiêu đề bài đăng hoặc container chính) ───────────
@@ -228,7 +242,7 @@ public class NhatotPlaywrightScraper
         {
             // ── Luôn cleanup dù exception ───────────────────────────────────
 
-            await page.CloseAsync();
+            if (page != null) await page.CloseAsync();
             if (context != null) await context.DisposeAsync();
             if (browser  != null) await browser.DisposeAsync();
             playwright?.Dispose();
@@ -395,6 +409,9 @@ public class NhatotPlaywrightScraper
         {
             var r = await GetPhoneAsync(list[i]);
             results.Add(r);
+
+            // Bị chặn thì dừng luôn, các URL còn lại sẽ quét lại sau khi hết thời gian nghỉ
+            if (r.IsBlocked) break;
         }
 
         return results;
@@ -487,6 +504,7 @@ public class ScrapeResult
     public string Phone { set; get; }
     public bool Success { set; get; }
     public string Error { set; get; }
+    public bool IsBlocked { set; get; }
 
     public ScrapeResult(string url, string phone, bool success, string error)
     {
@@ -502,6 +520,11 @@ public class ScrapeResult
     public static ScrapeResult Fail(string url, string error)
     {
         return new ScrapeResult(url, null, false, error);
+    }
+
+    public static ScrapeResult Blocked(string url)
+    {
+        return new ScrapeResult(url, null, false, "Bị nhatot chặn IP (Please try again later!)") { IsBlocked = true };
     }
 
     public string AdId => Url.Split('/').Last().Replace(".htm", "");

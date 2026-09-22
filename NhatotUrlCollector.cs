@@ -88,7 +88,13 @@ public class NhatotUrlCollector
 
     // ─── Lấy URL từ 1 trang ──────────────────────────────────────────────────
 
-    public async Task<List<string>> GetUrlsFromPageAsync(string baseUrl, int pageNumber)
+    public Task<List<string>> GetUrlsFromPageAsync(string baseUrl, int pageNumber)
+    {
+        return NhatotRateLimiter.RunAsync(() => GetUrlsFromPageCoreAsync(baseUrl, pageNumber));
+    }
+
+    /// <exception cref="NhatotBlockedException">Khi nhatot chặn IP.</exception>
+    private async Task<List<string>> GetUrlsFromPageCoreAsync(string baseUrl, int pageNumber)
     {
         IPlaywright playwright = null;
         IBrowser browser = null;
@@ -126,11 +132,18 @@ public class NhatotUrlCollector
 
             page = await context.NewPageAsync();
 
-            await page.GotoAsync(searchUrl, new PageGotoOptions
+            var response = await page.GotoAsync(searchUrl, new PageGotoOptions
             {
                 WaitUntil = WaitUntilState.DOMContentLoaded,
                 Timeout   = 30_000,
             });
+
+            if (await NhatotRateLimiter.IsBlockedAsync(page, response))
+            {
+                NhatotRateLimiter.ReportBlocked(searchUrl);
+                throw new NhatotBlockedException(searchUrl);
+            }
+            NhatotRateLimiter.ReportSuccess();
 
             // Chờ danh sách tin đăng load xong
             // Thử các selector thường gặp của nhatot
@@ -141,6 +154,10 @@ public class NhatotUrlCollector
 
             Console.WriteLine($"  → Tìm thấy {urls.Count} URL");
             return urls;
+        }
+        catch (NhatotBlockedException)
+        {
+            throw;
         }
         catch (TimeoutException)
         {
@@ -156,7 +173,7 @@ public class NhatotUrlCollector
         {
             // ── Luôn cleanup dù exception ───────────────────────────────────
 
-            await page.CloseAsync();
+            if (page != null) await page.CloseAsync();
             if (context != null) await context.DisposeAsync();
             if (browser  != null) await browser.DisposeAsync();
             playwright?.Dispose();

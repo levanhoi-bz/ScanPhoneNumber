@@ -31,6 +31,7 @@ namespace BDS
                     UNIQUE(""PhoneNumber"")
                 );
             CREATE INDEX IF NOT EXISTS idx_phone_number ON " + TablePhoneNumber + @"(PhoneNumber);
+            CREATE INDEX IF NOT EXISTS idx_url ON " + TablePhoneNumber + @"(Url);
 
              CREATE TABLE IF NOT EXISTS PhoneNumbersTelegram (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,6 +197,27 @@ namespace BDS
                 return string.Empty;
             }
         }
+        /// <summary>Lọc bỏ các URL tin đăng đã có trong DB (đã quét rồi thì không mở lại).</summary>
+        public static List<string> FilterNewUrls(List<string> urls)
+        {
+            var result = new List<string>();
+            using (var conn = new SQLiteConnection(ConnString))
+            {
+                conn.Open();
+                using (var cmd = new SQLiteCommand($"SELECT 1 FROM {TablePhoneNumber} WHERE Url = @url LIMIT 1", conn))
+                {
+                    var p = cmd.Parameters.Add("@url", System.Data.DbType.String);
+                    foreach (var url in urls)
+                    {
+                        p.Value = url;
+                        if (cmd.ExecuteScalar() == null)
+                            result.Add(url);
+                    }
+                }
+            }
+            return result;
+        }
+
         public static bool SaveToDatabasePhoneNumber(long ProfileId, string phoneNumber, string url)
         {
             using (var conn = new SQLiteConnection(ConnString))

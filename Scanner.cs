@@ -107,7 +107,7 @@ namespace ScanPhoneNumber
                     var phones = ScrapePhones_Proxy(url, out bool isOK);
                     if (!isOK)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(1000));
+                        await Task.Delay(TimeSpan.FromSeconds(20));
                         continue;
                     }
 

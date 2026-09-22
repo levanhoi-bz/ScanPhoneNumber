@@ -149,6 +149,7 @@
     </Compile>
     <Compile Include="HTMLHelper.cs" />
     <Compile Include="NhatotPlaywrightScraper.cs" />
+    <Compile Include="NhatotRateLimiter.cs" />
     <Compile Include="NhatotUrlCollector.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
