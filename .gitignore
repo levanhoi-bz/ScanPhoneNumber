@@ -78,3 +78,6 @@ $tf/
 # Local test files
 TestResult*/
 *.trx
+
+# Token Telegram - KHONG commit
+telegram.secrets.config

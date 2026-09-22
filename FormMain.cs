@@ -36,6 +36,9 @@ namespace BDS
 
             DBM.InitializeDatabase();
 
+            TelegramDispatcher.Start();
+            FormClosing += (s, e) => TelegramDispatcher.Stop();
+
             string list = DBM.GetPhoneNumbersCreatedAfterOneWeek();
             txtDsSDT.Text = list; // txtPhoneNumbers là TextBox multiline
         }
@@ -82,10 +85,10 @@ namespace BDS
             if (_listBox == null) return;
 
             string message = logEvent.RenderMessage();
-            if (message.StartsWith("[INSERT PhoneNumbersTelegram]"))
+            if (message.StartsWith("[TELEGRAM SENT]"))
                 _textBox.Invoke(new Action(() =>
                 {
-                    _textBox.Text = message.Replace("[INSERT PhoneNumbersTelegram]", "") + "\r\n" + _textBox.Text;
+                    _textBox.Text = message.Replace("[TELEGRAM SENT]", "") + "\r\n" + _textBox.Text;
                     _listBox.TopIndex = 0; // Cuộn lên đầu
                 }));
             else

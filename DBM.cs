@@ -14,9 +14,13 @@ namespace BDS
         static string dbPath = "phones2.db";
         static string TablePhoneNumber = "PhoneNumbers";
 
+        // WAL cho phep luong scanner INSERT trong khi timer Telegram UPDATE, khong bi "database is locked".
+        // BusyTimeout de connection tu doi thay vi nem loi ngay khi gap lock.
+        static string ConnString => $"Data Source={dbPath};Version=3;Journal Mode=WAL;BusyTimeout=5000;";
+
         public static void InitializeDatabase()
         {
-            var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;");
+            var conn = new SQLiteConnection(ConnString);
             conn.Open();
             var cmd = new SQLiteCommand(@"
             CREATE TABLE IF NOT EXISTS "+TablePhoneNumber +@" (
@@ -67,7 +71,62 @@ namespace BDS
                 }
             }
 
+            MigrateTelegramSentAt(conn);
+
             conn.Close();
+        }
+
+        /// <summary>
+        /// Them cot TelegramSentAt (NULL = chua gui, co gia tri = da gui luc nao).
+        /// Lan dau them cot: danh dau TOAN BO so cu la da gui, de hang doi bat dau rong.
+        /// Neu khong backfill, tick dau tien cua timer se co gui lai ca ~88k so cu.
+        /// Backfill nam trong cung transaction voi ALTER va chi chay dung mot lan.
+        /// </summary>
+        private static void MigrateTelegramSentAt(SQLiteConnection conn)
+        {
+            bool exists = false;
+            using (var cmd = new SQLiteCommand("PRAGMA table_info(" + TablePhoneNumber + ");", conn))
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    if (reader["name"].ToString().Equals("TelegramSentAt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+            }
+
+            if (exists)
+                return;
+
+            using (var tx = conn.BeginTransaction())
+            {
+                using (var cmd = new SQLiteCommand(
+                    "ALTER TABLE " + TablePhoneNumber + " ADD COLUMN TelegramSentAt DATETIME NULL;", conn, tx))
+                {
+                    cmd.ExecuteNonQuery();
+                }
+
+                long backfilled;
+                using (var cmd = new SQLiteCommand(
+                    "UPDATE " + TablePhoneNumber + " SET TelegramSentAt = CreatedAt WHERE TelegramSentAt IS NULL;", conn, tx))
+                {
+                    backfilled = cmd.ExecuteNonQuery();
+                }
+
+                // Index loc hang doi: chi cac dong chua gui, nen rat nho du bang co ~88k dong.
+                using (var cmd = new SQLiteCommand(
+                    "CREATE INDEX IF NOT EXISTS idx_telegram_pending ON " + TablePhoneNumber +
+                    "(CreatedAt) WHERE TelegramSentAt IS NULL;", conn, tx))
+                {
+                    cmd.ExecuteNonQuery();
+                }
+
+                tx.Commit();
+                Log.Information($"[MIGRATION] Da them cot TelegramSentAt, danh dau {backfilled} so cu la da gui.");
+            }
         }
 
         public static string GetPhoneNumbersCreatedAfterOneWeek()
@@ -76,15 +135,18 @@ namespace BDS
 
             try
             {
-                using (var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+                using (var conn = new SQLiteConnection(ConnString))
                 {
                     conn.Open();
 
+                    // Doc tu PhoneNumbers.TelegramSentAt - PhoneNumbersTelegram khong con duoc ghi nua.
+                    // LIMIT 500 vi bang nay co ~88k dong, do het vao TextBox se treo UI.
                     string sql = @"
-                    SELECT PhoneNumber, CreatedAt 
-                    FROM PhoneNumbersTelegram
-                    WHERE CreatedAt > datetime('now', '-700 days')
-                    ORDER BY CreatedAt DESC;
+                    SELECT PhoneNumber, TelegramSentAt AS CreatedAt
+                    FROM PhoneNumbers
+                    WHERE TelegramSentAt IS NOT NULL
+                    ORDER BY TelegramSentAt DESC
+                    LIMIT 500;
                 ";
 
                     using (var cmd = new SQLiteCommand(sql, conn))
@@ -114,7 +176,7 @@ namespace BDS
         {
             try
             {
-                using (var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+                using (var connection = new SQLiteConnection(ConnString))
                 {
                     connection.Open();
 
@@ -136,7 +198,7 @@ namespace BDS
         }
         public static bool SaveToDatabasePhoneNumber(long ProfileId, string phoneNumber, string url)
         {
-            using (var conn = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+            using (var conn = new SQLiteConnection(ConnString))
             {
                 conn.Open();
 
@@ -179,7 +241,7 @@ namespace BDS
         {
             try
             {
-                using (var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+                using (var connection = new SQLiteConnection(ConnString))
                 {
                     connection.Open();
 
@@ -200,9 +262,101 @@ namespace BDS
             }
 
         }
+
+        /// <summary>
+        /// Lay lo so chua gui Telegram, cu nhat truoc.
+        /// </summary>
+        public static List<PendingPhone> GetPendingTelegram(int limit)
+        {
+            var result = new List<PendingPhone>();
+            try
+            {
+                using (var conn = new SQLiteConnection(ConnString))
+                {
+                    conn.Open();
+                    using (var cmd = new SQLiteCommand(
+                        "SELECT PhoneNumber, Url FROM " + TablePhoneNumber +
+                        " WHERE TelegramSentAt IS NULL ORDER BY CreatedAt ASC LIMIT @limit;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@limit", limit);
+                        using (var reader = cmd.ExecuteReader())
+                            while (reader.Read())
+                                result.Add(new PendingPhone
+                                {
+                                    PhoneNumber = reader["PhoneNumber"].ToString(),
+                                    Url = reader["Url"].ToString()
+                                });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("[TELEGRAM QUEUE] Loi doc hang doi: " + ex.Message);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Danh dau da gui cho dung lo vua gui thanh cong. Goi ngay sau MOI chunk,
+        /// khong doi het luot - neu chunk sau that bai thi chunk truoc khong bi gui lai.
+        /// </summary>
+        public static void MarkTelegramSent(List<string> phoneNumbers)
+        {
+            if (phoneNumbers == null || phoneNumbers.Count == 0)
+                return;
+
+            try
+            {
+                using (var conn = new SQLiteConnection(ConnString))
+                {
+                    conn.Open();
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        using (var cmd = new SQLiteCommand(
+                            "UPDATE " + TablePhoneNumber +
+                            " SET TelegramSentAt = CURRENT_TIMESTAMP WHERE PhoneNumber = @phone;", conn, tx))
+                        {
+                            var p = cmd.Parameters.Add("@phone", System.Data.DbType.String);
+                            foreach (var phone in phoneNumbers)
+                            {
+                                p.Value = phone;
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        tx.Commit();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Gui thanh cong nhung khong danh dau duoc -> luot sau gui trung. Chap nhan duoc,
+                // nhung phai log de biet chu khong tuong la bug.
+                Log.Error("[TELEGRAM QUEUE] Gui thanh cong nhung KHONG danh dau duoc, luot sau se gui trung: " + ex.Message);
+            }
+        }
+
+        public static long CountPendingTelegram()
+        {
+            try
+            {
+                using (var conn = new SQLiteConnection(ConnString))
+                {
+                    conn.Open();
+                    using (var cmd = new SQLiteCommand(
+                        "SELECT COUNT(*) FROM " + TablePhoneNumber + " WHERE TelegramSentAt IS NULL;", conn))
+                        return (long)cmd.ExecuteScalar();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("[TELEGRAM QUEUE] Loi dem hang doi: " + ex.Message);
+                return -1;
+            }
+        }
+
        public static int GetLastPageNumber(string url)
        {
-            using (var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+            using (var connection = new SQLiteConnection(ConnString))
             {
                 connection.Open();
 
@@ -217,7 +371,7 @@ namespace BDS
         }
         public static void SavePageNumber(int pageNumber, string url)
         {
-            using (var connection = new SQLiteConnection($"Data Source={dbPath};Version=3;"))
+            using (var connection = new SQLiteConnection(ConnString))
             {
                 connection.Open();
 
@@ -230,5 +384,11 @@ namespace BDS
                 }
             }
         }
+    }
+
+    public class PendingPhone
+    {
+        public string PhoneNumber { get; set; }
+        public string Url { get; set; }
     }
 }

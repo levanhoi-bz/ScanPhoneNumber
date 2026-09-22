@@ -126,16 +126,10 @@ namespace ScanPhoneNumber
                     if (phones.Count > 0)
                         DBM.SavePageNumber(page, baseUrl);// Lưu trang đã quét
 
-                    if (IsSendTelegram)
-                        // Nếu có số mới, gửi vào Telegram
-                        if (newPhones.Count > 0) // && newPhones.Count < phones.Count)
-                        {
-                            string message = $"{baseUrl}?page={page}\n" + string.Join("\n", newPhones);
-                            await TelegramHelper.SendTelegramMessage(message);
-
-                            foreach (var phoneNumber in newPhones)
-                                DBM.SaveToDatabaseTelegram(phoneNumber, $"{baseUrl}?page={page}");
-                        }
+                    // So moi da nam trong PhoneNumbers voi TelegramSentAt IS NULL.
+                    // TelegramDispatcher se gui theo lo - xem chu thich o Scanner.cs.
+                    if (IsSendTelegram && newPhones.Count > 0)
+                        Log.Information($"[TELEGRAM QUEUE] Them {newPhones.Count} so vao hang doi tu {baseUrl}?page={page}");
 
                     page++;
 
