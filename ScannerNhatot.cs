@@ -27,10 +27,12 @@ namespace ScanPhoneNumber
         static bool IsSendTelegram = true;
 
         const string baseUrl_HN = "https://www.nhatot.com/mua-ban-bat-dong-san-ha-noi";
-        const int Max_HN = 100;
-
         const string baseUrl_HCM = "https://www.nhatot.com/mua-ban-bat-dong-san-tp-ho-chi-minh";
-        const int Max_HCM = 100;
+
+        // Tin mới luôn nằm ở các trang đầu → mỗi vòng chỉ quét vài trang đầu rồi nghỉ,
+        // thay vì quét liên tục tới trang 100 (dễ bị chặn IP).
+        static readonly int PagesPerRound = NhatotRateLimiter.GetInt("NhatotPagesPerRound", 3);
+        static readonly int RoundDelayMinutes = NhatotRateLimiter.GetInt("NhatotRoundDelayMinutes", 30);
 
         public static async Task Init()
         {
@@ -48,44 +50,32 @@ namespace ScanPhoneNumber
 
             Log.Information("Start run job...");
 
-            RunJobAsync(baseUrl_HN, Max_HN);
-            RunJobAsync(baseUrl_HCM, Max_HCM);
+            // HN và HCM chạy song song nhưng dùng chung NhatotRateLimiter nên request vẫn đi tuần tự
+            Task.Run(() => RunJobAsync(baseUrl_HN));
+            Task.Run(() => RunJobAsync(baseUrl_HCM));
 
             Log.Information("Nhan Enter de thoat...");
             Console.ReadLine();
         }
-        static async Task RunJobAsync(string baseUrl, int maxPerPage)
-        {
-            int pageCurrent = 0;
-            while (pageCurrent < maxPerPage)
-            {
-                int pageStart = pageCurrent + 1;
-                int pageEnd = pageCurrent + 10000;
-                if (pageEnd > maxPerPage) pageEnd = maxPerPage;
 
-                Task.Run(() => RunJobAsync(baseUrl, pageStart, pageEnd));
-
-                pageCurrent = pageEnd;
-            }
-        }
-
-        static async Task RunJobAsync(string baseUrl, int startPage, int endPage)
+        static async Task RunJobAsync(string baseUrl)
         {
             while (true)
             {
-                Log.Information($"Job chay luc: {DateTime.Now} cho url = {baseUrl}, startPage = {startPage}, endPage = {endPage} ");
+                Log.Information($"Job chay luc: {DateTime.Now} cho url = {baseUrl}, trang 1 - {PagesPerRound}");
 
                 try
                 {
-                    await ScrapeAndSavePhones(baseUrl, startPage, endPage);
+                    // endPage không tính, nên +1 để quét đủ PagesPerRound trang
+                    await ScrapeAndSavePhones(baseUrl, 1, PagesPerRound + 1);
                 }
                 catch (Exception ex)
                 {
                     Log.Error($"Loi: {ex.Message}");
                 }
 
-                Random random = new Random();
-                await Task.Delay(TimeSpan.FromSeconds(5)); // Chạy mỗi 5 giây
+                Log.Information($"[NHATOT] Xong vòng {baseUrl}, nghỉ {RoundDelayMinutes} phút.");
+                await Task.Delay(TimeSpan.FromMinutes(RoundDelayMinutes));
             }
         }
 
@@ -159,8 +149,7 @@ namespace ScanPhoneNumber
                         Log.Information($"[TELEGRAM QUEUE] Them {newPhones.Count} so vao hang doi tu {baseUrl}?page={page}");
 
                     page++;
-
-                    await Task.Delay(TimeSpan.FromSeconds(2)); // Chạy mỗi 1 giây
+                    // Giãn cách giữa các request do NhatotRateLimiter lo
                 }
             }
             catch (Exception ex)
